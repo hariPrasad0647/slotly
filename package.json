@@ -1,0 +1,72 @@
+{
+  "name": "slotly-backend",
+  "version": "1.0.0",
+  "description": "Production-grade SaaS backend for Slotly",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "nodemon",
+    "start": "node src/server.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "seed": "node src/prisma/seed.js"
+  },
+  "keywords": [
+    "saas",
+    "booking",
+    "payments",
+    "zoom",
+    "scheduling",
+    "nodejs",
+    "express",
+    "prisma"
+  ],
+  "author": "Hari Prasad",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "axios": "^1.9.0",
+    "bcryptjs": "^3.0.2",
+    "bullmq": "^5.52.0",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.6.1",
+    "ejs": "^3.1.10",
+    "envalid": "^8.1.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "hpp": "^0.2.3",
+    "http-status-codes": "^2.3.0",
+    "ioredis": "^5.6.1",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
+    "node-cron": "^4.1.0",
+    "nodemailer": "^7.0.3",
+    "pdfkit": "^0.17.1",
+    "pino": "^9.14.0",
+    "pino-http": "^10.4.0",
+    "pino-pretty": "^13.1.3",
+    "prisma": "^6.19.3",
+    "razorpay": "^2.9.6",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.1",
+    "xss-clean": "^0.1.4",
+    "zod": "^3.25.28"
+  },
+  "devDependencies": {
+    "eslint": "^9.27.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.4.0",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.5.3"
+  }
+}

@@ -1,0 +1,839 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/*
+|--------------------------------------------------------------------------
+| ENUMS
+|--------------------------------------------------------------------------
+*/
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PRO
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PAST_DUE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum PaymentProvider {
+  RAZORPAY
+  STRIPE
+}
+
+enum NotificationProvider {
+  SMTP
+  TWILIO
+  SYSTEM
+}
+
+enum BookingSource {
+  PUBLIC_PAGE
+  DASHBOARD
+  ADMIN
+  API
+}
+
+/*
+|--------------------------------------------------------------------------
+| USER
+|--------------------------------------------------------------------------
+*/
+
+model User {
+  id String @id @default(cuid())
+
+  email    String @unique
+  password String
+
+  firstName String
+  lastName  String?
+
+  phoneNumber String?
+
+  role UserRole @default(USER)
+
+  isEmailVerified Boolean @default(false)
+
+  emailVerifiedAt DateTime?
+
+  isActive Boolean @default(true)
+
+  timezone String @default("UTC")
+
+  lastLoginAt DateTime?
+
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hostProfile            HostProfile?
+  subscriptions          Subscription[]
+  bookings               Booking[]
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  auditLogs              AuditLog[]
+  refreshTokens          RefreshToken[]
+  zoomConnection         ZoomConnection?
+
+  @@index([email])
+}
+
+/*
+|--------------------------------------------------------------------------
+| HOST PROFILE
+|--------------------------------------------------------------------------
+*/
+
+model HostProfile {
+  id String @id @default(cuid())
+
+  userId String @unique
+
+  username String @unique
+  slug     String @unique
+
+  displayName String
+
+  bio String?
+
+  avatarUrl String?
+
+  meetingBufferMinutes Int @default(0)
+
+  isPublic Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  availabilityRules     AvailabilityRule[]
+  availabilityOverrides AvailabilityOverride[]
+  slots                 Slot[]
+  bookings              Booking[]
+
+  @@index([slug])
+  @@index([username])
+}
+
+/*
+|--------------------------------------------------------------------------
+| SUBSCRIPTIONS
+|--------------------------------------------------------------------------
+*/
+
+model Subscription {
+  id String @id @default(cuid())
+
+  userId String
+
+  plan SubscriptionPlan @default(FREE)
+
+  status SubscriptionStatus @default(TRIALING)
+
+  providerSubscriptionId String?
+
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  cancelAtPeriodEnd Boolean @default(false)
+
+  cancelledAt DateTime?
+  expiredAt   DateTime?
+
+  trialEndsAt DateTime?
+
+  lastPaymentAt DateTime?
+  nextBillingAt DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  featureAccesses FeatureAccess[]
+  notifications   Notification[]
+  events          SubscriptionEvent[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([plan])
+}
+
+model FeatureAccess {
+  id String @id @default(cuid())
+
+  subscriptionId String
+
+  featureKey String
+
+  enabled Boolean @default(true)
+
+  expiresAt DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([featureKey])
+}
+
+model SubscriptionEvent {
+  id String @id @default(cuid())
+
+  subscriptionId String
+
+  type String
+
+  description String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([type])
+}
+
+/*
+|--------------------------------------------------------------------------
+| AVAILABILITY
+|--------------------------------------------------------------------------
+*/
+
+model AvailabilityRule {
+  id String @id @default(cuid())
+
+  hostProfileId String
+
+  dayOfWeek Int
+
+  startTime String
+  endTime   String
+
+  slotDurationMinutes Int
+
+  timezone String
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hostProfile HostProfile @relation(fields: [hostProfileId], references: [id], onDelete: Cascade)
+
+  slots Slot[]
+
+  @@index([hostProfileId])
+  @@index([dayOfWeek])
+}
+
+model AvailabilityOverride {
+  id String @id @default(cuid())
+
+  hostProfileId String
+
+  date DateTime
+
+  isAvailable Boolean @default(false)
+
+  startTime String?
+  endTime   String?
+
+  reason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hostProfile HostProfile @relation(fields: [hostProfileId], references: [id], onDelete: Cascade)
+
+  @@index([hostProfileId])
+  @@index([date])
+}
+
+/*
+|--------------------------------------------------------------------------
+| SLOT INVENTORY
+|--------------------------------------------------------------------------
+*/
+
+model Slot {
+  id String @id @default(cuid())
+
+  hostProfileId String
+
+  availabilityRuleId String?
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  timezone String
+
+  isBooked Boolean @default(false)
+
+  lockedUntil DateTime?
+
+  failedAttempts Int @default(0)
+
+  bookingId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hostProfile HostProfile @relation(fields: [hostProfileId], references: [id], onDelete: Cascade)
+
+  availabilityRule AvailabilityRule? @relation(fields: [availabilityRuleId], references: [id], onDelete: SetNull)
+
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([hostProfileId, startsAt])
+
+  @@index([hostProfileId])
+  @@index([startsAt])
+  @@index([isBooked])
+  @@index([lockedUntil])
+
+  @@index([hostProfileId, startsAt, isBooked])
+}
+
+/*
+|--------------------------------------------------------------------------
+| BOOKINGS
+|--------------------------------------------------------------------------
+*/
+
+model Booking {
+  id String @id @default(cuid())
+
+  hostProfileId String
+
+  userId String?
+
+  slotId String @unique
+
+  bookingReference String @unique
+
+  source BookingSource @default(PUBLIC_PAGE)
+
+  status BookingStatus @default(PENDING)
+
+  clientName  String
+  clientEmail String
+
+  notes String?
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  timezone String
+
+  meetingUrl String?
+
+  cancelledAt DateTime?
+
+  cancellationReason String?
+
+  rescheduledFromBookingId String?
+
+  rescheduledToBookingId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hostProfile HostProfile @relation(fields: [hostProfileId], references: [id], onDelete: Cascade)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  slot Slot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+
+  payments          Payment[]
+  notifications     Notification[]
+  reminderSchedules ReminderSchedule[]
+  zoomMeeting       ZoomMeeting?
+  bookingEvents     BookingEvent[]
+
+  @@index([hostProfileId])
+  @@index([clientEmail])
+  @@index([status])
+  @@index([startsAt])
+
+  @@index([hostProfileId, status, startsAt])
+}
+
+/*
+|--------------------------------------------------------------------------
+| BOOKING EVENTS
+|--------------------------------------------------------------------------
+*/
+
+model BookingEvent {
+  id String @id @default(cuid())
+
+  bookingId String
+
+  type String
+
+  description String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([type])
+}
+
+/*
+|--------------------------------------------------------------------------
+| PAYMENTS
+|--------------------------------------------------------------------------
+*/
+
+model Payment {
+  id String @id @default(cuid())
+
+  bookingId String
+
+  provider PaymentProvider
+
+  providerOrderId String? @unique
+
+  providerPaymentId String? @unique
+
+  providerSignature String?
+
+  amount Int
+
+  currency String @default("INR")
+
+  status PaymentStatus @default(PENDING)
+
+  paidAt DateTime?
+
+  failedAt DateTime?
+
+  refundedAt DateTime?
+
+  failureReason String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  refunds Refund[]
+
+  @@index([bookingId])
+  @@index([status])
+  @@index([providerPaymentId])
+  @@index([providerOrderId])
+}
+
+model Refund {
+  id String @id @default(cuid())
+
+  paymentId String
+
+  amount Int
+
+  reason String?
+
+  providerRefundId String?
+
+  status String
+
+  refundedAt DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+/*
+|--------------------------------------------------------------------------
+| IDEMPOTENCY
+|--------------------------------------------------------------------------
+*/
+
+model IdempotencyKey {
+  id String @id @default(cuid())
+
+  key String
+
+  endpoint String
+
+  requestHash String
+
+  response Json?
+
+  statusCode Int?
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@unique([key, endpoint])
+
+  @@index([expiresAt])
+}
+
+/*
+|--------------------------------------------------------------------------
+| WEBHOOK EVENTS
+|--------------------------------------------------------------------------
+*/
+
+model WebhookEvent {
+  id String @id @default(cuid())
+
+  provider PaymentProvider
+
+  eventType String
+
+  externalEventId String? @unique
+
+  payload Json
+
+  processed Boolean @default(false)
+
+  processedAt DateTime?
+
+  failedAt DateTime?
+
+  errorMessage String?
+
+  retryCount Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([provider])
+  @@index([eventType])
+  @@index([processed])
+  @@index([externalEventId])
+}
+
+/*
+|--------------------------------------------------------------------------
+| NOTIFICATIONS
+|--------------------------------------------------------------------------
+*/
+
+model Notification {
+  id String @id @default(cuid())
+
+  userId String?
+
+  bookingId String?
+
+  subscriptionId String?
+
+  channel NotificationChannel
+
+  status NotificationStatus @default(PENDING)
+
+  subject String?
+
+  content String
+
+  scheduledFor DateTime?
+
+  sentAt DateTime?
+
+  failedAt DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  deliveries NotificationDelivery[]
+
+  @@index([userId])
+  @@index([bookingId])
+  @@index([subscriptionId])
+
+  @@index([status])
+  @@index([channel])
+
+  @@index([scheduledFor])
+
+  @@index([status, scheduledFor])
+}
+
+model NotificationDelivery {
+  id String @id @default(cuid())
+
+  notificationId String
+
+  provider NotificationProvider
+
+  providerMessageId String?
+
+  attempt Int @default(1)
+
+  success Boolean @default(false)
+
+  errorMessage String?
+
+  deliveredAt DateTime?
+
+  failedAt DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([notificationId])
+  @@index([provider])
+  @@index([success])
+}
+
+model ReminderSchedule {
+  id String @id @default(cuid())
+
+  bookingId String
+
+  reminderType String
+
+  scheduledFor DateTime
+
+  processed Boolean @default(false)
+
+  processedAt DateTime?
+
+  failedAt DateTime?
+
+  retryCount Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([scheduledFor])
+  @@index([processed])
+
+  @@index([processed, scheduledFor])
+}
+
+model NotificationPreference {
+  id String @id @default(cuid())
+
+  userId String @unique
+
+  emailEnabled Boolean @default(true)
+
+  bookingReminders Boolean @default(true)
+
+  paymentReceipts Boolean @default(true)
+
+  marketingEmails Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/*
+|--------------------------------------------------------------------------
+| ZOOM
+|--------------------------------------------------------------------------
+*/
+
+model ZoomConnection {
+  id String @id @default(cuid())
+
+  userId String @unique
+
+  zoomAccountId String
+
+  zoomEmail String
+
+  accessToken String
+
+  refreshToken String
+
+  tokenExpiresAt DateTime
+
+  connectedAt DateTime @default(now())
+
+  disconnectedAt DateTime?
+
+  isActive Boolean @default(true)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  meetings ZoomMeeting[]
+
+  @@index([userId])
+  @@index([zoomAccountId])
+}
+
+model ZoomMeeting {
+  id String @id @default(cuid())
+
+  bookingId String @unique
+
+  zoomConnectionId String
+
+  providerMeetingId String
+
+  hostJoinUrl String
+
+  participantJoinUrl String
+
+  password String?
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  createdByProvider Boolean @default(false)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  zoomConnection ZoomConnection @relation(fields: [zoomConnectionId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([providerMeetingId])
+}
+
+/*
+|--------------------------------------------------------------------------
+| AUDIT LOGS
+|--------------------------------------------------------------------------
+*/
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  userId String?
+
+  action String
+
+  entityType String
+
+  entityId String
+
+  metadata Json?
+
+  ipAddress String?
+
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+/*
+|--------------------------------------------------------------------------
+| REFRESH TOKENS
+|--------------------------------------------------------------------------
+*/
+
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId String
+
+  token String @unique
+
+  expiresAt DateTime
+
+  revoked Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
