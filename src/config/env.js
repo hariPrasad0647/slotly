@@ -22,6 +22,30 @@ const env = cleanEnv(process.env, {
     default: "7d",
   }),
 
+  REFRESH_TOKEN_EXPIRES_DAYS: num({
+    default: 30,
+  }),
+
+  RESET_TOKEN_EXPIRES_IN: str({
+    default: "10m",
+  }),
+
+  OTP_LENGTH: num({
+    default: 6,
+  }),
+
+  OTP_EXPIRY_MINUTES: num({
+    default: 10,
+  }),
+
+  OTP_MAX_ATTEMPTS: num({
+    default: 5,
+  }),
+
+  BCRYPT_SALT_ROUNDS: num({
+    default: 10,
+  }),
+
   FRONTEND_URL: str(),
 
   BACKEND_URL: str(),

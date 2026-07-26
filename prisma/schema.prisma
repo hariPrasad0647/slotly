@@ -3,15 +3,15 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
-/*
-|--------------------------------------------------------------------------
-| ENUMS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | ENUMS
+ * |--------------------------------------------------------------------------
+ */
 
 enum UserRole {
   USER
@@ -79,11 +79,11 @@ enum BookingSource {
   API
 }
 
-/*
-|--------------------------------------------------------------------------
-| USER
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | USER
+ * |--------------------------------------------------------------------------
+ */
 
 model User {
   id String @id @default(cuid())
@@ -121,15 +121,16 @@ model User {
   auditLogs              AuditLog[]
   refreshTokens          RefreshToken[]
   zoomConnection         ZoomConnection?
+  passwordResetOtps      PasswordResetOtp[]
 
   @@index([email])
 }
 
-/*
-|--------------------------------------------------------------------------
-| HOST PROFILE
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | HOST PROFILE
+ * |--------------------------------------------------------------------------
+ */
 
 model HostProfile {
   id String @id @default(cuid())
@@ -141,9 +142,21 @@ model HostProfile {
 
   displayName String
 
-  bio String?
+  bio String? @db.Text
 
-  avatarUrl String?
+  avatarUrl String? @db.Text
+
+  headline String?
+
+  experienceYears Int?
+
+  expertise Json?
+
+  qualifications Json?
+
+  languages Json?
+
+  socialLinks Json?
 
   meetingBufferMinutes Int @default(0)
 
@@ -163,11 +176,11 @@ model HostProfile {
   @@index([username])
 }
 
-/*
-|--------------------------------------------------------------------------
-| SUBSCRIPTIONS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | SUBSCRIPTIONS
+ * |--------------------------------------------------------------------------
+ */
 
 model Subscription {
   id String @id @default(cuid())
@@ -238,7 +251,7 @@ model SubscriptionEvent {
 
   type String
 
-  description String?
+  description String? @db.Text
 
   metadata Json?
 
@@ -250,11 +263,11 @@ model SubscriptionEvent {
   @@index([type])
 }
 
-/*
-|--------------------------------------------------------------------------
-| AVAILABILITY
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | AVAILABILITY
+ * |--------------------------------------------------------------------------
+ */
 
 model AvailabilityRule {
   id String @id @default(cuid())
@@ -306,11 +319,11 @@ model AvailabilityOverride {
   @@index([date])
 }
 
-/*
-|--------------------------------------------------------------------------
-| SLOT INVENTORY
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | SLOT INVENTORY
+ * |--------------------------------------------------------------------------
+ */
 
 model Slot {
   id String @id @default(cuid())
@@ -339,23 +352,23 @@ model Slot {
 
   availabilityRule AvailabilityRule? @relation(fields: [availabilityRuleId], references: [id], onDelete: SetNull)
 
-  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  booking Booking? @relation("SlotBooking", fields: [bookingId], references: [id], onDelete: SetNull)
+
+  ownedByBooking Booking? @relation("BookingSlot")
 
   @@unique([hostProfileId, startsAt])
-
   @@index([hostProfileId])
   @@index([startsAt])
   @@index([isBooked])
   @@index([lockedUntil])
-
   @@index([hostProfileId, startsAt, isBooked])
 }
 
-/*
-|--------------------------------------------------------------------------
-| BOOKINGS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | BOOKINGS
+ * |--------------------------------------------------------------------------
+ */
 
 model Booking {
   id String @id @default(cuid())
@@ -375,18 +388,18 @@ model Booking {
   clientName  String
   clientEmail String
 
-  notes String?
+  notes String? @db.Text
 
   startsAt DateTime
   endsAt   DateTime
 
   timezone String
 
-  meetingUrl String?
+  meetingUrl String? @db.Text
 
   cancelledAt DateTime?
 
-  cancellationReason String?
+  cancellationReason String? @db.Text
 
   rescheduledFromBookingId String?
 
@@ -399,7 +412,9 @@ model Booking {
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  slot Slot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  slot Slot @relation("BookingSlot", fields: [slotId], references: [id], onDelete: Restrict)
+
+  linkedSlots Slot[] @relation("SlotBooking")
 
   payments          Payment[]
   notifications     Notification[]
@@ -411,15 +426,14 @@ model Booking {
   @@index([clientEmail])
   @@index([status])
   @@index([startsAt])
-
   @@index([hostProfileId, status, startsAt])
 }
 
-/*
-|--------------------------------------------------------------------------
-| BOOKING EVENTS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | BOOKING EVENTS
+ * |--------------------------------------------------------------------------
+ */
 
 model BookingEvent {
   id String @id @default(cuid())
@@ -428,7 +442,7 @@ model BookingEvent {
 
   type String
 
-  description String?
+  description String? @db.Text
 
   metadata Json?
 
@@ -440,11 +454,11 @@ model BookingEvent {
   @@index([type])
 }
 
-/*
-|--------------------------------------------------------------------------
-| PAYMENTS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | PAYMENTS
+ * |--------------------------------------------------------------------------
+ */
 
 model Payment {
   id String @id @default(cuid())
@@ -457,7 +471,7 @@ model Payment {
 
   providerPaymentId String? @unique
 
-  providerSignature String?
+  providerSignature String? @db.Text
 
   amount Int
 
@@ -471,7 +485,7 @@ model Payment {
 
   refundedAt DateTime?
 
-  failureReason String?
+  failureReason String? @db.Text
 
   metadata Json?
 
@@ -512,11 +526,11 @@ model Refund {
   @@index([paymentId])
 }
 
-/*
-|--------------------------------------------------------------------------
-| IDEMPOTENCY
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | IDEMPOTENCY
+ * |--------------------------------------------------------------------------
+ */
 
 model IdempotencyKey {
   id String @id @default(cuid())
@@ -536,15 +550,14 @@ model IdempotencyKey {
   createdAt DateTime @default(now())
 
   @@unique([key, endpoint])
-
   @@index([expiresAt])
 }
 
-/*
-|--------------------------------------------------------------------------
-| WEBHOOK EVENTS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | WEBHOOK EVENTS
+ * |--------------------------------------------------------------------------
+ */
 
 model WebhookEvent {
   id String @id @default(cuid())
@@ -563,7 +576,7 @@ model WebhookEvent {
 
   failedAt DateTime?
 
-  errorMessage String?
+  errorMessage String? @db.Text
 
   retryCount Int @default(0)
 
@@ -575,11 +588,11 @@ model WebhookEvent {
   @@index([externalEventId])
 }
 
-/*
-|--------------------------------------------------------------------------
-| NOTIFICATIONS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | NOTIFICATIONS
+ * |--------------------------------------------------------------------------
+ */
 
 model Notification {
   id String @id @default(cuid())
@@ -596,7 +609,7 @@ model Notification {
 
   subject String?
 
-  content String
+  content String @db.Text
 
   scheduledFor DateTime?
 
@@ -620,12 +633,9 @@ model Notification {
   @@index([userId])
   @@index([bookingId])
   @@index([subscriptionId])
-
   @@index([status])
   @@index([channel])
-
   @@index([scheduledFor])
-
   @@index([status, scheduledFor])
 }
 
@@ -642,7 +652,7 @@ model NotificationDelivery {
 
   success Boolean @default(false)
 
-  errorMessage String?
+  errorMessage String? @db.Text
 
   deliveredAt DateTime?
 
@@ -683,7 +693,6 @@ model ReminderSchedule {
   @@index([bookingId])
   @@index([scheduledFor])
   @@index([processed])
-
   @@index([processed, scheduledFor])
 }
 
@@ -706,11 +715,11 @@ model NotificationPreference {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-/*
-|--------------------------------------------------------------------------
-| ZOOM
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | ZOOM
+ * |--------------------------------------------------------------------------
+ */
 
 model ZoomConnection {
   id String @id @default(cuid())
@@ -721,9 +730,9 @@ model ZoomConnection {
 
   zoomEmail String
 
-  accessToken String
+  accessToken String @db.Text
 
-  refreshToken String
+  refreshToken String @db.Text
 
   tokenExpiresAt DateTime
 
@@ -751,13 +760,13 @@ model ZoomMeeting {
 
   bookingId String @unique
 
-  zoomConnectionId String
+  zoomConnectionId String?
 
   providerMeetingId String
 
-  hostJoinUrl String
+  hostJoinUrl String @db.Text
 
-  participantJoinUrl String
+  participantJoinUrl String @db.Text
 
   password String?
 
@@ -773,17 +782,17 @@ model ZoomMeeting {
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
-  zoomConnection ZoomConnection @relation(fields: [zoomConnectionId], references: [id], onDelete: Cascade)
+  zoomConnection ZoomConnection? @relation(fields: [zoomConnectionId], references: [id], onDelete: SetNull)
 
   @@index([bookingId])
   @@index([providerMeetingId])
 }
 
-/*
-|--------------------------------------------------------------------------
-| AUDIT LOGS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | AUDIT LOGS
+ * |--------------------------------------------------------------------------
+ */
 
 model AuditLog {
   id String @id @default(cuid())
@@ -800,7 +809,7 @@ model AuditLog {
 
   ipAddress String?
 
-  userAgent String?
+  userAgent String? @db.Text
 
   createdAt DateTime @default(now())
 
@@ -813,11 +822,11 @@ model AuditLog {
   @@index([createdAt])
 }
 
-/*
-|--------------------------------------------------------------------------
-| REFRESH TOKENS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | REFRESH TOKENS
+ * |--------------------------------------------------------------------------
+ */
 
 model RefreshToken {
   id String @id @default(cuid())
@@ -829,6 +838,35 @@ model RefreshToken {
   expiresAt DateTime
 
   revoked Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/**
+ * |--------------------------------------------------------------------------
+ * | PASSWORD RESET OTP
+ * |--------------------------------------------------------------------------
+ */
+
+model PasswordResetOtp {
+  id String @id @default(cuid())
+
+  userId String
+
+  otpHash String
+
+  expiresAt DateTime
+
+  attempts Int @default(0)
+
+  verifiedAt DateTime?
+
+  usedAt DateTime?
 
   createdAt DateTime @default(now())
 
