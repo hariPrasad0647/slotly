@@ -16,7 +16,12 @@ const validate = (schema, source = "body") => {
     }
 
     if (source === "query") {
-      Object.assign(req.query, result.data);
+      Object.defineProperty(req, "query", {
+        value: result.data,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
     } else {
       req.body = result.data;
     }

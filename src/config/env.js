@@ -66,6 +66,10 @@ const env = cleanEnv(process.env, {
 
   RAZORPAY_WEBHOOK_SECRET: str(),
 
+  PAYMENT_HOLD_MINUTES: num({
+    default: 15,
+  }),
+
   REDIS_URL: str({
     default: "",
   }),
@@ -84,6 +88,14 @@ const env = cleanEnv(process.env, {
 
   ENABLE_JOBS: bool({
     default: true,
+  }),
+
+  REMINDER_CRON: str({
+    default: "*/5 * * * *",
+  }),
+
+  DAILY_AGENDA_CRON: str({
+    default: "0 6 * * *",
   }),
 });
 

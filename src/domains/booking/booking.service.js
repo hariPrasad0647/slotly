@@ -8,12 +8,16 @@ dayjs.extend(timezonePlugin);
 
 const ApiError = require("../../utils/ApiError");
 const logger = require("../../config/logger");
+const env = require("../../config/env");
 const zoomConfig = require("../../config/zoom");
 const { sendEmail } = require("../../providers/email/nodemailer.provider");
 const bookingConfirmationTemplate = require("../../templates/emails/bookingConfirmation.template");
 const hostBookingNotificationTemplate = require("../../templates/emails/hostBookingNotification.template");
 const cancellationTemplate = require("../../templates/emails/cancellation.template");
+const hostBookingCancelledTemplate = require("../../templates/emails/hostBookingCancelled.template");
 const bookingRescheduledTemplate = require("../../templates/emails/bookingRescheduled.template");
+const hostBookingRescheduledTemplate = require("../../templates/emails/hostBookingRescheduled.template");
+const reminderService = require("../notification/reminder.service");
 
 const bookingRepository = require("./booking.repository");
 const bookingTransaction = require("./booking.transaction");
@@ -25,6 +29,10 @@ const availabilityRepository = require("../availability/availability.repository"
 const authRepository = require("../auth/auth.repository");
 const zoomService = require("../zoom/zoom.service");
 const zoomRepository = require("../zoom/zoom.repository");
+const paymentService = require("../payment/payment.service");
+const couponService = require("../coupon/coupon.service");
+const { toCsv } = require("../../utils/csv.util");
+const { buildBookingIcs, buildGoogleCalendarUrl } = require("../../utils/calendar.util");
 
 const formatInTz = (date, timezone) => dayjs(date).tz(timezone).format("dddd, MMMM D, YYYY [at] h:mm A");
 
@@ -212,6 +220,14 @@ const rescheduleSlot = async (userId, slotId, { newStartsAt, newEndsAt }) => {
       result.booking.meetingUrl = zoomMeeting.participantJoinUrl;
     }
 
+    const meeting = zoomMeeting
+      ? {
+          joinUrl: zoomMeeting.participantJoinUrl,
+          meetingId: zoomMeeting.meetingId,
+          password: zoomMeeting.password,
+        }
+      : null;
+
     sendEmailSafely({
       to: result.booking.clientEmail,
       ...bookingRescheduledTemplate({
@@ -221,15 +237,29 @@ const rescheduleSlot = async (userId, slotId, { newStartsAt, newEndsAt }) => {
         timezone: result.booking.timezone,
         bookingReference: result.booking.bookingReference,
         rescheduledBy: "host",
-        meeting: zoomMeeting
-          ? {
-              joinUrl: zoomMeeting.participantJoinUrl,
-              meetingId: zoomMeeting.meetingId,
-              password: zoomMeeting.password,
-            }
-          : null,
+        meeting,
       }),
     });
+
+    const hostUser = await authRepository.findUserById(userId);
+
+    if (hostUser) {
+      sendEmailSafely({
+        to: hostUser.email,
+        ...hostBookingRescheduledTemplate({
+          hostDisplayName: hostProfile.displayName,
+          clientName: result.booking.clientName,
+          newStartsAt: formatInTz(result.booking.startsAt, result.booking.timezone),
+          timezone: result.booking.timezone,
+          bookingReference: result.booking.bookingReference,
+          rescheduledBy: "host",
+          meeting,
+        }),
+      });
+    }
+
+    await reminderService.cancelRemindersForBooking(result.booking.id);
+    await reminderService.scheduleRemindersForBooking(result.booking);
   }
 
   return result;
@@ -258,44 +288,52 @@ const getPublicHostProfile = async (usernameOrSlug) => {
   return hostProfile;
 };
 
-const listPublicSlots = async (usernameOrSlug, { from, to }) => {
+const listPublicSlots = async (usernameOrSlug, { from, to, ruleId, durationMinutes, viewerTimezone }) => {
   const hostProfile = await getPublicHostProfile(usernameOrSlug);
 
-  return bookingRepository.findPublicOpenSlots(hostProfile.id, { from, to });
+  const slots = await bookingRepository.findPublicOpenSlots(hostProfile.id, {
+    from,
+    to,
+    ruleId,
+    durationMinutes,
+  });
+
+  if (!viewerTimezone) {
+    return slots;
+  }
+
+  return slots.map((slot) => ({
+    ...slot,
+    startsAtLocal: formatInTz(slot.startsAt, viewerTimezone),
+    endsAtLocal: formatInTz(slot.endsAt, viewerTimezone),
+  }));
+};
+
+const listPublicSessionTypes = async (usernameOrSlug) => {
+  const hostProfile = await getPublicHostProfile(usernameOrSlug);
+
+  return bookingRepository.findPublicSessionTypes(hostProfile.id);
 };
 
 /* -------------------------------------------------------------------------- */
 /* User: booking lifecycle                                                    */
 /* -------------------------------------------------------------------------- */
 
-const createBooking = async (userId, { slotId, notes }) => {
-  const user = await authRepository.findUserById(userId);
-
-  if (!user) {
-    throw new ApiError(401, "User not found");
-  }
-
-  const clientName = `${user.firstName} ${user.lastName || ""}`.trim();
-
-  const booking = await bookingTransaction.claimSlotAndCreateBooking({
-    slotId,
-    userId: user.id,
-    clientName,
-    clientEmail: user.email,
-    notes,
-    source: "API",
-  });
-
+const notifyBookingConfirmed = async (booking) => {
   const bookingWithHost = await bookingRepository.findBookingById(booking.id);
   const hostDisplayName = bookingWithHost.hostProfile.displayName;
   const hostEmail = bookingWithHost.hostProfile.user.email;
 
   const zoomMeeting = await createZoomMeetingForBooking(booking, hostDisplayName);
 
+  if (zoomMeeting) {
+    booking.meetingUrl = zoomMeeting.participantJoinUrl;
+  }
+
   sendEmailSafely({
     to: booking.clientEmail,
     ...bookingConfirmationTemplate({
-      clientName,
+      clientName: booking.clientName,
       hostDisplayName,
       startsAt: formatInTz(booking.startsAt, booking.timezone),
       timezone: booking.timezone,
@@ -314,12 +352,12 @@ const createBooking = async (userId, { slotId, notes }) => {
     to: hostEmail,
     ...hostBookingNotificationTemplate({
       hostDisplayName,
-      clientName,
+      clientName: booking.clientName,
       clientEmail: booking.clientEmail,
       startsAt: formatInTz(booking.startsAt, booking.timezone),
       timezone: booking.timezone,
       bookingReference: booking.bookingReference,
-      notes,
+      notes: booking.notes,
       meeting: zoomMeeting
         ? {
             joinUrl: zoomMeeting.participantJoinUrl,
@@ -331,7 +369,124 @@ const createBooking = async (userId, { slotId, notes }) => {
     }),
   });
 
+  await reminderService.scheduleRemindersForBooking(booking);
+
+  return zoomMeeting;
+};
+
+const createBooking = async (userId, { slotId, notes, couponCode }) => {
+  const user = await authRepository.findUserById(userId);
+
+  if (!user) {
+    throw new ApiError(401, "User not found");
+  }
+
+  const slot = await bookingRepository.findSlotById(slotId);
+
+  if (!slot) {
+    throw new ApiError(404, "Slot not found");
+  }
+
+  const clientName = `${user.firstName} ${user.lastName || ""}`.trim();
+
+  if (slot.isFree) {
+    const booking = await bookingTransaction.claimSlotAndCreateBooking({
+      slotId,
+      userId: user.id,
+      clientName,
+      clientEmail: user.email,
+      notes,
+      source: "API",
+    });
+
+    await notifyBookingConfirmed(booking);
+
+    return { booking, payment: null };
+  }
+
+  let appliedCoupon = null;
+  let finalAmount = slot.price;
+  let discountAmount = 0;
+
+  if (couponCode) {
+    const result = await couponService.validateCouponForBooking(
+      slot.hostProfileId,
+      couponCode,
+      slot.price
+    );
+
+    appliedCoupon = result.coupon;
+    finalAmount = result.finalAmount;
+    discountAmount = result.discountAmount;
+  }
+
+  const couponClaim = appliedCoupon
+    ? { id: appliedCoupon.id, maxRedemptions: appliedCoupon.maxRedemptions, discountAmount }
+    : undefined;
+
+  if (finalAmount <= 0) {
+    const booking = await bookingTransaction.claimSlotAndCreateBooking({
+      slotId,
+      userId: user.id,
+      clientName,
+      clientEmail: user.email,
+      notes,
+      source: "API",
+      coupon: couponClaim,
+    });
+
+    await notifyBookingConfirmed(booking);
+
+    return { booking, payment: null };
+  }
+
+  const booking = await bookingTransaction.holdSlotForPayment({
+    slotId,
+    userId: user.id,
+    clientName,
+    clientEmail: user.email,
+    notes,
+    source: "API",
+    holdMinutes: env.PAYMENT_HOLD_MINUTES,
+    coupon: couponClaim,
+  });
+
+  let order;
+
+  try {
+    ({ order } = await paymentService.createOrderForBooking(booking, {
+      amount: finalAmount,
+      currency: slot.currency,
+    }));
+  } catch (error) {
+    await bookingTransaction.releasePendingBooking(booking.id, "Payment order creation failed");
+    logger.error({ err: error.message, bookingId: booking.id }, "Failed to create Razorpay order");
+    throw new ApiError(502, "Could not initiate payment. Please try again.");
+  }
+
+  return {
+    booking,
+    payment: {
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: env.RAZORPAY_KEY_ID,
+    },
+  };
+};
+
+const confirmPendingBooking = async (bookingId) => {
+  const { booking, justConfirmed } = await bookingTransaction.finalizePendingBooking(bookingId);
+
+  if (justConfirmed) {
+    await notifyBookingConfirmed(booking);
+  }
+
   return booking;
+};
+
+const failPendingBooking = async (bookingId, reason) => {
+  return bookingTransaction.releasePendingBooking(bookingId, reason);
 };
 
 const getBookingById = async (actingUser, bookingId) => {
@@ -354,13 +509,44 @@ const getBookingById = async (actingUser, bookingId) => {
   return booking;
 };
 
-const getBookings = async (actingUser, { status, scope }) => {
+const getBookings = async (actingUser, { scope, ...filters }) => {
   if (scope === "hosted" && actingUser.role !== "USER") {
     const hostProfile = await availabilityService.getOwnHostProfile(actingUser.id);
-    return bookingRepository.findBookingsForHost(hostProfile.id, { status });
+    return bookingRepository.findBookingsForHost(hostProfile.id, filters);
   }
 
-  return bookingRepository.findBookingsForUser(actingUser.id, { status });
+  return bookingRepository.findBookingsForUser(actingUser.id, filters);
+};
+
+const exportBookings = async (actingUser, { scope, ...filters }) => {
+  const columns = [
+    { label: "Booking Reference", value: (b) => b.bookingReference },
+    { label: "Status", value: (b) => b.status },
+    { label: "Client Name", value: (b) => b.clientName },
+    { label: "Client Email", value: (b) => b.clientEmail },
+    { label: "Starts At", value: (b) => dayjs(b.startsAt).toISOString() },
+    { label: "Ends At", value: (b) => dayjs(b.endsAt).toISOString() },
+    { label: "Timezone", value: (b) => b.timezone },
+    { label: "Source", value: (b) => b.source },
+    { label: "Notes", value: (b) => b.notes || "" },
+    { label: "Cancellation Reason", value: (b) => b.cancellationReason || "" },
+    { label: "Created At", value: (b) => dayjs(b.createdAt).toISOString() },
+  ];
+
+  if (scope === "hosted" && actingUser.role !== "USER") {
+    const hostProfile = await availabilityService.getOwnHostProfile(actingUser.id);
+    const bookings = await bookingRepository.findBookingsForHostExport(hostProfile.id, filters);
+    return toCsv(columns, bookings);
+  }
+
+  const bookings = await bookingRepository.findBookingsForUserExport(actingUser.id, filters);
+  return toCsv(
+    [
+      ...columns,
+      { label: "Host", value: (b) => b.hostProfile?.displayName || "" },
+    ],
+    bookings
+  );
 };
 
 const cancelBooking = async (actingUser, bookingId, { cancellationReason }) => {
@@ -400,6 +586,20 @@ const cancelBooking = async (actingUser, bookingId, { cancellationReason }) => {
     }),
   });
 
+  sendEmailSafely({
+    to: existingBooking.hostProfile.user.email,
+    ...hostBookingCancelledTemplate({
+      hostDisplayName: existingBooking.hostProfile.displayName,
+      clientName: booking.clientName,
+      startsAt: formatInTz(booking.startsAt, booking.timezone),
+      timezone: booking.timezone,
+      bookingReference: booking.bookingReference,
+      cancellationReason,
+    }),
+  });
+
+  await reminderService.cancelRemindersForBooking(bookingId);
+
   return booking;
 };
 
@@ -428,6 +628,14 @@ const rescheduleBooking = async (userId, bookingId, { newSlotId }) => {
     newBooking.meetingUrl = zoomMeeting.participantJoinUrl;
   }
 
+  const meeting = zoomMeeting
+    ? {
+        joinUrl: zoomMeeting.participantJoinUrl,
+        meetingId: zoomMeeting.meetingId,
+        password: zoomMeeting.password,
+      }
+    : null;
+
   sendEmailSafely({
     to: newBooking.clientEmail,
     ...bookingRescheduledTemplate({
@@ -437,17 +645,92 @@ const rescheduleBooking = async (userId, bookingId, { newSlotId }) => {
       timezone: newBooking.timezone,
       bookingReference: newBooking.bookingReference,
       rescheduledBy: "user",
-      meeting: zoomMeeting
-        ? {
-            joinUrl: zoomMeeting.participantJoinUrl,
-            meetingId: zoomMeeting.meetingId,
-            password: zoomMeeting.password,
-          }
-        : null,
+      meeting,
     }),
   });
 
+  sendEmailSafely({
+    to: existingBooking.hostProfile.user.email,
+    ...hostBookingRescheduledTemplate({
+      hostDisplayName: existingBooking.hostProfile.displayName,
+      clientName: newBooking.clientName,
+      newStartsAt: formatInTz(newBooking.startsAt, newBooking.timezone),
+      timezone: newBooking.timezone,
+      bookingReference: newBooking.bookingReference,
+      rescheduledBy: "user",
+      meeting,
+    }),
+  });
+
+  await reminderService.cancelRemindersForBooking(bookingId);
+  await reminderService.scheduleRemindersForBooking(newBooking);
+
   return newBooking;
+};
+
+const assertHostOwnsBooking = async (actingUser, booking) => {
+  if (actingUser.role === "USER") {
+    throw new ApiError(403, "You do not have permission to perform this action");
+  }
+
+  const hostProfile = await availabilityService.getOwnHostProfile(actingUser.id);
+
+  if (booking.hostProfileId !== hostProfile.id) {
+    throw new ApiError(403, "You do not have permission to perform this action");
+  }
+};
+
+const completeBooking = async (actingUser, bookingId) => {
+  const existingBooking = await bookingRepository.findBookingById(bookingId);
+
+  if (!existingBooking) {
+    throw new ApiError(404, "Booking not found");
+  }
+
+  await assertHostOwnsBooking(actingUser, existingBooking);
+
+  return bookingTransaction.markBookingCompleted(bookingId);
+};
+
+const markNoShow = async (actingUser, bookingId, { reason }) => {
+  const existingBooking = await bookingRepository.findBookingById(bookingId);
+
+  if (!existingBooking) {
+    throw new ApiError(404, "Booking not found");
+  }
+
+  await assertHostOwnsBooking(actingUser, existingBooking);
+
+  return bookingTransaction.markBookingNoShow(bookingId, reason);
+};
+
+const getBookingCalendar = async (actingUser, bookingId, format) => {
+  const booking = await bookingRepository.findBookingById(bookingId);
+
+  if (!booking) {
+    throw new ApiError(404, "Booking not found");
+  }
+
+  const hostProfile =
+    actingUser.role !== "USER"
+      ? await availabilityService.getOwnHostProfile(actingUser.id).catch(() => null)
+      : null;
+
+  assertBookingAccess(booking, {
+    userId: actingUser.id,
+    hostProfileId: hostProfile?.id,
+  });
+
+  const hostDisplayName = booking.hostProfile.displayName;
+
+  if (format === "google") {
+    return { url: buildGoogleCalendarUrl(booking, hostDisplayName) };
+  }
+
+  return {
+    filename: `booking-${booking.bookingReference}.ics`,
+    content: buildBookingIcs(booking, hostDisplayName),
+  };
 };
 
 module.exports = {
@@ -457,9 +740,16 @@ module.exports = {
   deleteSlot,
   getPublicHostProfile,
   listPublicSlots,
+  listPublicSessionTypes,
   createBooking,
   getBookingById,
   getBookings,
+  exportBookings,
   cancelBooking,
   rescheduleBooking,
+  confirmPendingBooking,
+  failPendingBooking,
+  completeBooking,
+  markNoShow,
+  getBookingCalendar,
 };

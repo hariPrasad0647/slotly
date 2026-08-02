@@ -71,11 +71,16 @@ const createRule = async (userId, input) => {
 
   return availabilityRepository.createRule({
     hostProfileId: hostProfile.id,
+    title: input.title,
+    description: input.description,
     dayOfWeek: input.dayOfWeek,
     startTime: input.startTime,
     endTime: input.endTime,
     slotDurationMinutes: input.slotDurationMinutes,
     timezone: input.timezone,
+    isFree: input.isFree,
+    price: input.isFree ? 0 : input.price,
+    currency: input.currency,
   });
 };
 
@@ -92,6 +97,8 @@ const updateRule = async (userId, ruleId, input) => {
   assertRuleOwnership(rule, hostProfile.id);
 
   const merged = {
+    title: input.title ?? rule.title,
+    description: input.description ?? rule.description,
     dayOfWeek: input.dayOfWeek ?? rule.dayOfWeek,
     startTime: input.startTime ?? rule.startTime,
     endTime: input.endTime ?? rule.endTime,
@@ -108,9 +115,20 @@ const updateRule = async (userId, ruleId, input) => {
     await assertNoRuleOverlap(hostProfile.id, merged, ruleId);
   }
 
+  const resultingIsFree = input.isFree !== undefined ? input.isFree : rule.isFree;
+  const resultingPrice = input.price !== undefined ? input.price : rule.price;
+  const resultingCurrency = input.currency ?? rule.currency;
+
+  if (!resultingIsFree && resultingPrice <= 0) {
+    throw new ApiError(422, "price must be greater than 0 for a paid session");
+  }
+
   return availabilityRepository.updateRule(ruleId, {
     ...merged,
     isActive: resultingIsActive,
+    isFree: resultingIsFree,
+    price: resultingIsFree ? 0 : resultingPrice,
+    currency: resultingCurrency,
   });
 };
 

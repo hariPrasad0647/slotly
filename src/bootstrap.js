@@ -19,7 +19,8 @@ const bootstrap = async () => {
     |--------------------------------------------------------------------------
     */
 
-    // require("./jobs/reminder.job");
+    require("./jobs/reminder.job");
+    require("./jobs/dailyAgenda.job");
     // require("./jobs/subscriptionExpiry.job");
 
     logger.info("✅ Bootstrap completed");

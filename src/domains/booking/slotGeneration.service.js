@@ -16,7 +16,19 @@ const buildDateTimeInTz = (dateStr, timeStr, tz) => {
   return dayjs.tz(`${dateStr} ${timeStr}`, tz).toDate();
 };
 
-const createSlotIfFree = async ({ hostProfileId, availabilityRuleId, startsAt, endsAt, timezone, bufferMinutes }) => {
+const createSlotIfFree = async ({
+  hostProfileId,
+  availabilityRuleId,
+  title,
+  description,
+  startsAt,
+  endsAt,
+  timezone,
+  bufferMinutes,
+  isFree,
+  price,
+  currency,
+}) => {
   const overlaps = await hasOverlappingSlot({
     hostProfileId,
     startsAt,
@@ -33,9 +45,14 @@ const createSlotIfFree = async ({ hostProfileId, availabilityRuleId, startsAt, e
       data: {
         hostProfileId,
         availabilityRuleId: availabilityRuleId || null,
+        title: title || null,
+        description: description || null,
         startsAt,
         endsAt,
         timezone,
+        isFree,
+        price: isFree ? 0 : price,
+        currency,
       },
     });
 
@@ -83,10 +100,15 @@ const generateSlotsFromRule = async ({ hostProfile, rule, startDate, endDate }) 
         const result = await createSlotIfFree({
           hostProfileId: hostProfile.id,
           availabilityRuleId: rule.id,
+          title: rule.title,
+          description: rule.description,
           startsAt: slotStart,
           endsAt: slotEnd,
           timezone: rule.timezone,
           bufferMinutes,
+          isFree: rule.isFree,
+          price: rule.price,
+          currency: rule.currency,
         });
 
         if (result.status === "created") {
@@ -109,7 +131,7 @@ const generateManualSlots = async ({ hostProfile, slots, timezone }) => {
   const now = new Date();
   const bufferMinutes = hostProfile.meetingBufferMinutes || 0;
 
-  for (const { startsAt, endsAt } of slots) {
+  for (const { startsAt, endsAt, title, description, isFree, price, currency } of slots) {
     if (startsAt <= now) {
       skipped.push({ startsAt, endsAt, reason: "in the past" });
       continue;
@@ -118,10 +140,15 @@ const generateManualSlots = async ({ hostProfile, slots, timezone }) => {
     const result = await createSlotIfFree({
       hostProfileId: hostProfile.id,
       availabilityRuleId: null,
+      title,
+      description,
       startsAt,
       endsAt,
       timezone,
       bufferMinutes,
+      isFree,
+      price,
+      currency,
     });
 
     if (result.status === "created") {
